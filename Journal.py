@@ -28,8 +28,8 @@ st.set_page_config(page_title="LangChain: Chat with Documents", page_icon="🦜"
 st.title("🦜 LangChain: Chat with Documents")
 
 
-@st.cache_resource(ttl="1h")
-def configure_retriever(uploaded_files):
+#@st.cache_resource(ttl="1h")
+def configure_retriever(uploaded_files, collection_persona):
     # Read documents
     docs = []
     temp_dir = tempfile.TemporaryDirectory()
@@ -53,7 +53,16 @@ def configure_retriever(uploaded_files):
     #vectordb = DocArrayInMemorySearch.from_documents(splits, embeddings)
 
     CONNECTION_STRING = f"postgresql://ect1:{neon_db_password}@ep-aged-wind-10740449.ap-southeast-1.aws.neon.tech/journal-vector?sslmode=require"
-    COLLECTION_NAME = "journal-collection"
+
+    default_collection_name = "journal-collection"
+
+
+    COLLECTION_NAME = default_collection_name
+
+    if collection_persona == "Budget Secretary":
+        COLLECTION_NAME = "budget-secretary-collection"
+
+    print(COLLECTION_NAME)
 
     vectordb = PGVector.from_documents(
         embedding=embeddings,
@@ -63,7 +72,8 @@ def configure_retriever(uploaded_files):
     )
 
     # Define retriever
-    retriever = vectordb.as_retriever(search_type="mmr", search_kwargs={"k": 2, "fetch_k": 4})
+    #retriever = vectordb.as_retriever(search_type="mmr", search_kwargs={"k": 1, "fetch_k": 4})
+    retriever = vectordb.as_retriever(search_type="similarity")
 
     return retriever
 
@@ -106,34 +116,57 @@ class PrintRetrievalHandler(BaseCallbackHandler):
 #if not openai_api_key:
 #    st.info("Please add your OpenAI API key to continue.")
 #    st.stop()
+        
+collection_persona = st.sidebar.selectbox('Collection/Persona',
+    ('OB', 'Budget Secretary'))
 
 uploaded_files = st.sidebar.file_uploader(
-    label="Upload PDF files", type=["txt"], accept_multiple_files=True
+    label="Upload PDF filesss", type=["txt"], accept_multiple_files=True
 )
 #if not uploaded_files:
 #    st.info("Please upload PDF documents to continue.")
 #    st.stop()
 
-retriever = configure_retriever(uploaded_files)
+retriever = configure_retriever(uploaded_files, collection_persona)
 
 # Setup memory for contextual conversation
 msgs = StreamlitChatMessageHistory()
 memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True)
 
-sys_prompt = """You are tasked with analyzing a dataset containing blood sugar level records of a pregnant patient. 
+sys_prompt_ob = """You are tasked with analyzing a dataset containing blood sugar level records of a pregnant patient. 
     Your goal is to extract insights from the data to assess the patient's glucose control and overall health during pregnancy. The analysis should focus on the following aspects:Identify patterns and trends in the blood sugar levels throughout the day.Assess the effectiveness of the medication and treatment plan in managing blood sugar levels.
     Evaluate the impact of diet, meal timing, and lifestyle factors on blood sugar control.Detect episodes of hypoglycemia or hyperglycemia and investigate potential contributing factors.Consider symptoms, observations, and other remarks provided to gain a comprehensive understanding of the patient's health status.
     Provide a detailed analysis based on the data, highlighting any noteworthy findings, trends, or areas for further investigation.
+
+    I may ask for data either specific data or all data, show it in tabular form.
+
     --------------------
+    Answer the question based only on the following context:
     {context}
     """
+
+sys_prompt_budget = """"
+    You are a helpful budget assistant. Your goal is to track my daily expenses, including food, transportation, bills, rent, utilities, and unexpected expenditures like unplanned hangouts with friends or impulsive gadget purchases. Additionally, I would like you to generate reports, especially detailing the overall expenses on a weekly and monthly basis.
+
+    I may also ask you to show the data in daily, weekly, monthly and yearly basis. show them in tabular form with total expenses in row and column.
+    --------------------
+    Answer the question based only on the following context:
+    {context}
+    """
+
+sys_prompt = sys_prompt_ob
+
+if collection_persona == "Budget Secretary":
+    sys_prompt = sys_prompt_budget
+
+print(sys_prompt)
 
 # Setup LLM and QA chain
 llm = ChatOpenAI(
     model_name="gpt-3.5-turbo", temperature=0, streaming=True
 )
 qa_chain = ConversationalRetrievalChain.from_llm(
-    llm, retriever=retriever, memory=memory, verbose=True
+    llm, retriever=retriever, memory=memory, verbose=True, chain_type="stuff"
 )
 
 qa_chain.combine_docs_chain.llm_chain.prompt.messages[0] = SystemMessagePromptTemplate.from_template(sys_prompt)
