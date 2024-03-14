@@ -24,12 +24,12 @@ os.environ["LANGCHAIN_PROJECT"] = st.secrets["LANGCHAIN_PROJECT"]
 os.environ["LANGCHAIN_ENDPOINT"] = st.secrets["LANGCHAIN_ENDPOINT"]
 os.environ["LANGCHAIN_TRACING_V2"] = st.secrets["LANGCHAIN_TRACING_V2"]
 
-st.set_page_config(page_title="LangChain: Chat with Documents", page_icon="🦜")
+st.set_page_config(page_title="Chat with Documents", page_icon="🦜")
 st.title("🦜 LangChain: Chat with Documents")
 
 
 #@st.cache_resource(ttl="1h")
-def configure_retriever(uploaded_files, collection_persona):
+def configure_retriever(uploaded_files, collection_persona, pre_delete_collection=False):
     # Read documents
     docs = []
     temp_dir = tempfile.TemporaryDirectory()
@@ -56,11 +56,12 @@ def configure_retriever(uploaded_files, collection_persona):
 
     default_collection_name = "journal-collection"
 
-
     COLLECTION_NAME = default_collection_name
 
     if collection_persona == "Budget Secretary":
         COLLECTION_NAME = "budget-secretary-collection"
+    elif collection_persona == "Crypto Buddy":
+        COLLECTION_NAME = "crypto-buddy-collection"
 
     print(COLLECTION_NAME)
 
@@ -69,6 +70,7 @@ def configure_retriever(uploaded_files, collection_persona):
         documents=splits,
         collection_name=COLLECTION_NAME,
         connection_string=CONNECTION_STRING,
+        pre_delete_collection=pre_delete_collection
     )
 
     # Define retriever
@@ -118,20 +120,50 @@ class PrintRetrievalHandler(BaseCallbackHandler):
 #    st.stop()
         
 collection_persona = st.sidebar.selectbox('Collection/Persona',
-    ('OB', 'Budget Secretary'))
+    ('OB', 'Budget Secretary', 'Crypto Buddy'))
 
 uploaded_files = st.sidebar.file_uploader(
     label="Upload PDF filesss", type=["txt"], accept_multiple_files=True
 )
+
+pre_delete_collection = st.sidebar.checkbox("Pre-delete collection")
+
+# "gpt-3.5-turbo"
+# gpt-4-0125-preview
+
+model_name = 'gpt-3.5-turbo'
+if st.sidebar.checkbox('GPT4'):
+    model_name = 'gpt-4-0125-preview'
+
+
+
+print(model_name)
+
+
+if 'clicked' not in st.session_state:
+    st.session_state.clicked = False
+
+def click_button():
+    st.session_state.clicked = True
+
+go = st.sidebar.button('Go', on_click=click_button)
+
+
+if not st.session_state.clicked:
+    st.stop()
 #if not uploaded_files:
 #    st.info("Please upload PDF documents to continue.")
 #    st.stop()
 
-retriever = configure_retriever(uploaded_files, collection_persona)
+retriever = configure_retriever(uploaded_files, collection_persona, pre_delete_collection)
 
 # Setup memory for contextual conversation
 msgs = StreamlitChatMessageHistory()
 memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True)
+
+if go:
+    msgs.clear()
+    msgs.add_ai_message("How can I help you?")
 
 sys_prompt_ob = """You are tasked with analyzing a dataset containing blood sugar level records of a pregnant patient. 
     Your goal is to extract insights from the data to assess the patient's glucose control and overall health during pregnancy. The analysis should focus on the following aspects:Identify patterns and trends in the blood sugar levels throughout the day.Assess the effectiveness of the medication and treatment plan in managing blood sugar levels.
@@ -153,17 +185,46 @@ sys_prompt_budget = """"
     Answer the question based only on the following context:
     {context}
     """
+sys_prompt_crypto_buddy = """
+    
+    You're tasked with analyzing a cryptocurrency trader's trade journal to provide insights and guidance. Each entry in the journal contains:
+    1. Trade rationale: Explanation of the reasoning behind each trade.
+    2. Risk management: Details on strategies used to manage risk.
+    3. Trade execution: Information on entry and exit points, timing, and execution challenges.
+    4. Performance evaluation: Outcomes of each trade and assessment of strategy effectiveness.
+    5. Emotional and psychological factors: Insights into emotional challenges and coping mechanisms.
+    6. Learning and improvement: Reflection on lessons learned and areas for development.
+    7. Future planning: Discussion of plans for future trades and strategy adjustments.
+    Your objective is to analyze the data and offer recommendations for improvement. Provide a detailed analysis highlighting patterns, trends, and areas for optimization to enhance trading performance.
+    You have 2 tasks.
+    1. Remind me when I'm going to enter a trade about the last performance of that coin, remind me of my rules, and let me know if I'm in good physical and emotional condition.
+    2. Analyze based on the dataset. These are the fields of the dataset below:
+    Date, Coin, Long/Short, Confluences,  Entry reason,  Exit reason, spot/derivative, Strategy, Entry Price, Exit Price, Quantity, Amount, Duration, pnl
+
+
+    --------------------
+    Answer the question based only on the following context:
+    Question: {question}
+
+    Context: {context}
+
+    Answer:
+    """
 
 sys_prompt = sys_prompt_ob
 
 if collection_persona == "Budget Secretary":
     sys_prompt = sys_prompt_budget
+elif collection_persona == "Crypto Buddy":
+    sys_prompt = sys_prompt_crypto_buddy
 
-print(sys_prompt)
+# print(sys_prompt)
 
+# "gpt-3.5-turbo"
+# gpt-4-0125-preview
 # Setup LLM and QA chain
 llm = ChatOpenAI(
-    model_name="gpt-3.5-turbo", temperature=0, streaming=True
+    model_name=model_name, temperature=0, streaming=True
 )
 qa_chain = ConversationalRetrievalChain.from_llm(
     llm, retriever=retriever, memory=memory, verbose=True, chain_type="stuff"
